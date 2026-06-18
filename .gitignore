@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Run output
+evidence-*/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
