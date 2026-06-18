@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "oeqa-reporter"
 version = "0.1.0"
 description = "Run a Yocto oeqa testexport bundle and render a video + log evidence report"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]

@@ -18,3 +18,23 @@ jobs:
         run: ruff check
       - name: Test
         run: pytest
+
+  shiv:
+    runs-on: ubuntu-latest
+    needs: host
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install shiv
+        run: pip install shiv
+      - name: Build shiv
+        run: |
+          pip install --target .site-pkgs .
+          shiv --site-packages .site-pkgs --compressed -c oeqa-reporter -o oeqa-reporter
+      - name: Upload shiv
+        uses: actions/upload-artifact@v7
+        with:
+          name: oeqa-reporter
+          path: oeqa-reporter

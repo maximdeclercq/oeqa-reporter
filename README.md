@@ -25,7 +25,7 @@ collects dmesg, journal, and the serial console, and writes
 is reached as root over key-based SSH.
 
 Flashing and power cycling are optional and come from the environment;
-see [docs/board-control.md](docs/board-control.md).
+see [docs/CONTROL.md](docs/CONTROL.md).
 
 ## Output
 

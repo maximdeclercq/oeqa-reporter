@@ -21,7 +21,7 @@ class RunError(Exception):
     pass
 
 
-def resolve_bundle(bundle, artifact=None):
+def resolve_bundle(bundle: str | Path, artifact: str | None = None) -> Path:
     """Find the directory holding oe-test, accepting a parent of the bundle."""
     bundle = Path(bundle)
     if (bundle / "oe-test").is_file():
@@ -34,25 +34,25 @@ def resolve_bundle(bundle, artifact=None):
                 return d
     if len(subdirs) == 1:
         return subdirs[0]
-    raise RunError("no oe-test bundle under %s" % bundle)
+    raise RunError(f"no oe-test bundle under {bundle}")
 
 
-def _one_artifact(pattern):
+def _one_artifact(pattern: str) -> str:
     matches = sorted(glob.glob(pattern))
     if len(matches) > 1:
-        raise RunError("flash artifact pattern matched %d files: %s" % (len(matches), pattern))
+        raise RunError(f"flash artifact pattern matched {len(matches)} files: {pattern}")
     if matches:
         return matches[0]
     if Path(pattern).exists():
         return pattern
-    raise RunError("flash artifact not found: %s" % pattern)
+    raise RunError(f"flash artifact not found: {pattern}")
 
 
-def _ssh(host, *args):
-    return ["ssh", *SSH_OPTS, "root@" + host, *args]
+def _ssh(host: str, *args: str) -> list[str]:
+    return ["ssh", *SSH_OPTS, f"root@{host}", *args]
 
 
-def _tee(cmd, log, cwd=None):
+def _tee(cmd: list[str], log: Path, cwd: Path | None = None) -> int:
     """Run cmd, stream combined output to stdout and a log file, return exit code."""
     with open(log, "wb") as logf:
         proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -63,15 +63,15 @@ def _tee(cmd, log, cwd=None):
         return proc.wait()
 
 
-def _power(power_cmd, action):
+def _power(power_cmd: str | None, action: str) -> None:
     if not power_cmd:
         return
     rc = subprocess.call(shlex.split(power_cmd) + [action])
     if rc != 0:
-        raise RunError("power %s failed (exit %d)" % (action, rc))
+        raise RunError(f"power {action} failed (exit {rc})")
 
 
-def _wait_for_ssh(host, timeout=SSH_WAIT_S):
+def _wait_for_ssh(host: str, timeout: float = SSH_WAIT_S) -> None:
     print("waiting for ssh...")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -79,18 +79,18 @@ def _wait_for_ssh(host, timeout=SSH_WAIT_S):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
             return
         time.sleep(POLL_S)
-    raise RunError("no ssh on %s within %ds" % (host, timeout))
+    raise RunError(f"no ssh on {host} within {timeout:.0f}s")
 
 
-def _collect(host, command, dest):
+def _collect(host: str, command: str, dest: Path) -> None:
     with open(dest, "wb") as f:
         subprocess.call(_ssh(host, command), stdout=f, stderr=subprocess.DEVNULL)
 
 
-def _run_oetest(bundle, host, out, suites):
+def _run_oetest(bundle: Path, host: str, out: Path, suites: str | None) -> None:
     cases = sorted(str(p.relative_to(bundle)) for p in bundle.glob(CASES_GLOB))
     if not cases:
-        raise RunError("no oeqa runtime cases under %s/%s" % (bundle, CASES_GLOB))
+        raise RunError(f"no oeqa runtime cases under {bundle}/{CASES_GLOB}")
     # --run-tests is greedy (nargs +), so it must follow the case directories.
     cmd = ["./oe-test", "-d", "runtime", "--target-type", "simpleremote",
            "--target-ip", host, "--json-result-dir", str(out.resolve()), *cases]
@@ -99,7 +99,7 @@ def _run_oetest(bundle, host, out, suites):
     _tee(cmd, out / report.RUN_LOG, cwd=bundle)
 
 
-def _terminate(proc):
+def _terminate(proc: subprocess.Popen | None) -> None:
     if proc and proc.poll() is None:
         proc.terminate()
         try:
@@ -108,14 +108,15 @@ def _terminate(proc):
             proc.kill()
 
 
-def run(bundle, target, *, video=None, suites=None, title=None, out=None,
-        flash_cmd=None, flash_artifact=None, power_cmd=None, serial_cmd=None,
-        skip_flash=False):
+def run(bundle: str | Path, target: str, *, video: str | None = None, suites: str | None = None,
+        title: str | None = None, out: str | Path | None = None, flash_cmd: str | None = None,
+        flash_artifact: str | None = None, power_cmd: str | None = None,
+        serial_cmd: str | None = None, skip_flash: bool = False) -> Path:
     if not target:
         raise RunError("a target address is required")
     host = target[5:] if target.startswith("root@") else target
     bundle = resolve_bundle(bundle, flash_artifact)
-    out = Path(out) if out else Path("evidence-" + time.strftime("%Y%m%d-%H%M%S"))
+    out = Path(out) if out else Path(f"evidence-{time.strftime('%Y%m%d-%H%M%S')}")
     out.mkdir(parents=True, exist_ok=True)
 
     capture = serial = None
@@ -123,7 +124,7 @@ def run(bundle, target, *, video=None, suites=None, title=None, out=None,
         if flash_cmd and flash_artifact and not skip_flash:
             rc = _tee(shlex.split(flash_cmd) + [_one_artifact(flash_artifact)], out / "flash.log")
             if rc != 0:
-                raise RunError("flash failed (exit %d)" % rc)
+                raise RunError(f"flash failed (exit {rc})")
         _power(power_cmd, "off")
         if video:
             capture = subprocess.Popen(

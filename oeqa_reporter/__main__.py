@@ -11,13 +11,13 @@ __version__ = "0.1.0"
 DESCRIPTION = "Run a Yocto oeqa testexport bundle and render a video + log evidence report."
 
 
-def _with_extra(cmd_var, extra_var):
+def _with_extra(cmd_var: str, extra_var: str) -> str | None:
     cmd = os.environ.get(cmd_var)
     extra = os.environ.get(extra_var)
-    return "%s %s" % (cmd, extra) if cmd and extra else cmd
+    return f"{cmd} {extra}" if cmd and extra else cmd
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="oeqa-reporter", description=DESCRIPTION)
     ap.add_argument("--version", action="version", version=__version__)
     ap.add_argument("bundle", help="testexport bundle (has oe-test), or its parent")
@@ -43,7 +43,7 @@ def build_parser():
     return ap
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if not args.target:
         print("error: a target is required (pass --target or set $TEST_TARGET_IP)", file=sys.stderr)
@@ -56,9 +56,9 @@ def main(argv=None):
             power_cmd=args.power_cmd, serial_cmd=args.serial_cmd, skip_flash=args.skip_flash,
         )
     except (runner.RunError, OSError) as exc:
-        print("error: %s" % exc, file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-    print("wrote %s" % index)
+    print(f"wrote {index}")
     return 0
 
 

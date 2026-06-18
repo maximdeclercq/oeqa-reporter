@@ -28,23 +28,23 @@ COLOR = {"PASSED": "#1a7f37", "FAILED": "#cf222e", "ERROR": "#bc4c00",
 ORDER = {"FAILED": 0, "ERROR": 1, "SKIPPED": 2, "PASSED": 3}
 
 
-def sh(cmd):
+def sh(cmd: list[str]) -> str:
     return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
 
 
-def video_seconds(path):
+def video_seconds(path: Path) -> float:
     out = sh(["ffprobe", "-v", "error", "-show_entries", "format=duration",
               "-of", "default=nw=1:nk=1", str(path)])
     return float(out) if out else 0.0
 
 
-def clip(video, start, end, dest):
-    subprocess.run(["ffmpeg", "-nostdin", "-y", "-ss", "%.2f" % max(0.0, start),
-                    "-to", "%.2f" % end, "-i", str(video), "-c", "copy", str(dest)],
+def clip(video: Path, start: float, end: float, dest: Path) -> None:
+    subprocess.run(["ffmpeg", "-nostdin", "-y", "-ss", f"{max(0.0, start):.2f}",
+                    "-to", f"{end:.2f}", "-i", str(video), "-c", "copy", str(dest)],
                    capture_output=True)
 
 
-def parse_log(path):
+def parse_log(path: Path) -> dict[str, dict]:
     """Map each test id to its {start, end, body} from the timestamped run log."""
     tests, cur = {}, None
     for line in path.read_text(errors="replace").splitlines():
@@ -65,20 +65,18 @@ def parse_log(path):
     return tests
 
 
-def section(title, summary, body):
+def section(title: str, summary: dict, body: list[str]) -> str:
     open_attr = " open" if summary["status"] in ("FAILED", "ERROR", "BOOT") else ""
-    pill = '<span class=pill style="background:%s">%s</span>' % (
-        COLOR.get(summary["status"], "#57606a"), summary["status"])
-    video = ('<video controls preload=none src="%s"></video>' % summary["clip"]
+    pill = f'<span class=pill style="background:{COLOR.get(summary["status"], "#57606a")}">{summary["status"]}</span>'
+    video = (f'<video controls preload=none src="{summary["clip"]}"></video>'
              if summary.get("clip") else "")
     log = "\n".join(body).strip()
-    log_html = "<pre>%s</pre>" % html.escape(log) if log else "<p class=muted>no captured output</p>"
-    return ("<details%s><summary>%s <code>%s</code> "
-            "<span class=muted>%.1fs</span></summary>%s%s</details>") % (
-        open_attr, pill, html.escape(title), summary["dur"], video, log_html)
+    log_html = f"<pre>{html.escape(log)}</pre>" if log else "<p class=muted>no captured output</p>"
+    return (f"<details{open_attr}><summary>{pill} <code>{html.escape(title)}</code> "
+            f"<span class=muted>{summary['dur']:.1f}s</span></summary>{video}{log_html}</details>")
 
 
-def render(evidence, title=None):
+def render(evidence: str | Path, title: str | None = None) -> Path:
     """Write index.html into the evidence directory and return its path."""
     ev = Path(evidence)
     title = title or ev.name
@@ -100,38 +98,38 @@ def render(evidence, title=None):
         name = tid.split(".")[0] + "." + tid.split(".")[-1]
         body = list(logged.get(tid, {}).get("body", []))
         if len(body) > 120:
-            body = ["... (%d earlier log lines omitted)" % (len(body) - 120)] + body[-120:]
+            body = [f"... ({len(body) - 120} earlier log lines omitted)"] + body[-120:]
         if r.get("log"):
             body += ["", r["log"]]
         clip_src = None
         if have_video and tid in logged:
-            clip_src = "%s/%s.mp4" % (CLIPS, name)
+            clip_src = f"{CLIPS}/{name}.mp4"
             clip(video, logged[tid]["start"] - anchor - BLEED,
                  logged[tid]["end"] - anchor + BLEED, ev / clip_src)
         items.append((ORDER.get(r["status"], 9), logged.get(tid, {}).get("start", 0),
                       section(tid, {"status": r["status"], "dur": r.get("duration", 0.0),
                                     "clip": clip_src}, body)))
 
-    chips = " ".join('<span class=pill style="background:%s">%d %s</span>'
-                     % (COLOR.get(k, "#57606a"), v, k.lower()) for k, v in sorted(counts.items()))
+    chips = " ".join(f'<span class=pill style="background:{COLOR.get(k, "#57606a")}">{v} {k.lower()}</span>'
+                     for k, v in sorted(counts.items()))
     (ev / SUMMARY).write_text(
-        ev.name + "\n" + "  ".join("%d %s" % (v, k) for k, v in sorted(counts.items())) + "\n")
+        ev.name + "\n" + "  ".join(f"{v} {k}" for k, v in sorted(counts.items())) + "\n")
 
     parts = []
     if have_video:
-        parts += ['<a href="%s">capture</a>' % CAPTURE,
-                  '<a href="%s/%s">boot clip</a>' % (CLIPS, BOOT_CLIP)]
-    parts.append('<a href="%s">summary</a>' % SUMMARY)
+        parts += [f'<a href="{CAPTURE}">capture</a>',
+                  f'<a href="{CLIPS}/{BOOT_CLIP}">boot clip</a>']
+    parts.append(f'<a href="{SUMMARY}">summary</a>')
     for name in COLLECTED_LOGS:
         f = ev / name
         if f.exists() and f.stat().st_size:
-            parts.append('<a href="%s">%s</a>' % (name, name))
+            parts.append(f'<a href="{name}">{name}</a>')
     links = " &middot; ".join(parts)
 
     boot = ""
     if have_video:
         boot = section("boot / power-on",
-                       {"status": "BOOT", "dur": first + BLEED, "clip": "%s/%s" % (CLIPS, BOOT_CLIP)},
+                       {"status": "BOOT", "dur": first + BLEED, "clip": f"{CLIPS}/{BOOT_CLIP}"},
                        ["power-on through the first test; full capture linked above"])
     rows = boot + "\n" + "\n".join(s for _, _, s in sorted(items))
     index = ev / INDEX
