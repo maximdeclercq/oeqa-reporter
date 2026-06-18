@@ -33,4 +33,5 @@ def test_render_without_video(tmp_path):
     assert "<title>demo run</title>" in page
     assert "1 passed" in page and "1 failed" in page and "1 skipped" in page
     assert page.index("test_beta") < page.index("test_alpha")  # failed sorts first
+    assert "ltpresult" not in page  # status-less result blobs are skipped, not rendered
     assert (ev / "summary.txt").read_text().strip().endswith("1 SKIPPED")

@@ -94,7 +94,10 @@ def render(evidence: str | Path, title: str | None = None) -> Path:
 
     counts, items = {}, []
     for tid, r in results.items():
-        counts[r["status"]] = counts.get(r["status"], 0) + 1
+        status = r.get("status")
+        if not status:
+            continue  # non-test blobs (ltp rawlogs/sections) sit in result with no status
+        counts[status] = counts.get(status, 0) + 1
         name = tid.split(".")[0] + "." + tid.split(".")[-1]
         body = list(logged.get(tid, {}).get("body", []))
         if len(body) > 120:
@@ -106,8 +109,8 @@ def render(evidence: str | Path, title: str | None = None) -> Path:
             clip_src = f"{CLIPS}/{name}.mp4"
             clip(video, logged[tid]["start"] - anchor - BLEED,
                  logged[tid]["end"] - anchor + BLEED, ev / clip_src)
-        items.append((ORDER.get(r["status"], 9), logged.get(tid, {}).get("start", 0),
-                      section(tid, {"status": r["status"], "dur": r.get("duration", 0.0),
+        items.append((ORDER.get(status, 9), logged.get(tid, {}).get("start", 0),
+                      section(tid, {"status": status, "dur": r.get("duration", 0.0),
                                     "clip": clip_src}, body)))
 
     chips = " ".join(f'<span class=pill style="background:{COLOR.get(k, "#57606a")}">{v} {k.lower()}</span>'
