@@ -1,0 +1,9 @@
+2026-06-17 18:00:00,000 - runtime - INFO - test_alpha (demo.DemoTest.test_alpha)
+2026-06-17 18:00:00,100 - runtime - INFO - Command: echo hello
+2026-06-17 18:00:00,200 - runtime - INFO - Output: hello
+2026-06-17 18:00:01,200 - runtime - INFO -  ... ok
+2026-06-17 18:00:01,300 - runtime - INFO - test_beta (demo.DemoTest.test_beta)
+2026-06-17 18:00:01,400 - runtime - INFO - Command: false
+2026-06-17 18:00:01,800 - runtime - INFO -  ... FAIL
+2026-06-17 18:00:01,900 - runtime - INFO - test_gamma (demo.DemoTest.test_gamma)
+2026-06-17 18:00:01,950 - runtime - INFO -  ... skipped 'needs hardware'
