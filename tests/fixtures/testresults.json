@@ -2,7 +2,7 @@
   "runtime_demo": {
     "result": {
       "demo.DemoTest.test_alpha": {"status": "PASSED", "duration": 1.2},
-      "demo.DemoTest.test_beta": {"status": "FAILED", "duration": 0.4, "log": "AssertionError: false returned 1"},
+      "demo.DemoTest.test_beta": {"status": "FAILED", "duration": 0.4, "log": "Traceback (most recent call last):\n  File \"/bundle/lib/oeqa/runtime/cases/demo.py\", line 12, in test_beta\n    self.assertEqual(1, 2)\nAssertionError: 1 != 2"},
       "demo.DemoTest.test_gamma": {"status": "SKIPPED", "duration": 0.0, "log": "needs hardware"},
       "ltpresult.rawlogs": {"log": ""},
       "ltpresult.sections": {}
