@@ -12,18 +12,25 @@ from ._fonts import FONT_CSS
 
 # evidence directory layout; the runner writes these, the report links them
 CAPTURE = "capture.mp4"
+CAPTURE_START = "capture.start"              # wall-clock epoch of video t=0
 RUN_LOG = "oe-test.log"
+COMMANDS = "commands.log"                    # per-command trail
 RESULTS = "testresults.json"
 SUMMARY = "summary.txt"
 INDEX = "index.html"
 CLIPS = "clips"
-COLLECTED_LOGS = ("flash.log", "serial.log", "dmesg.log", "journal.log")
+COLLECTED_LOGS = ("flash.log", "serial.log", "commands.log", "dmesg.log", "journal.log")
 
 BLEED = 4.0                                  # seconds kept around each test window
 BODY_TAIL = 120                              # log lines kept per test before truncating the head
 LOG_TAIL = 400                               # lines kept when inlining a collected log
+CMD_TAIL = 200                               # command lines kept per test
+SERIAL_TEST_CAP = 1200                       # console lines kept per test
 STAMP = "%Y-%m-%d %H:%M:%S,%f"
 LOGLINE = re.compile(r"^(\d{4}-\d\d-\d\d [\d:,]+) - [\w.]+ - \w+ - (.*)")
+CMDLINE = re.compile(r"^(\d\d:\d\d:\d\d\.\d+) \w+: (.*)")  # remoteTarget.log: time-of-day only
+SERIALLINE = re.compile(r"^(\d\d:\d\d:\d\d\.\d+) (.*)")  # host-stamped console line
+SSH_NOISE = re.compile(r"\[Running\]\$ ssh -l root .*?export PATH=[^;]*; ")  # repeated ssh wrapper
 # anchored: the inline start is "test_x (id)"; the end-of-run summary lines are
 # "FAIL: test_x (id)" / "ERROR: test_x (id)" and must not open a second window
 TESTSTART = re.compile(r"^(test_\w+) \(([\w.]+)\)$")
@@ -48,9 +55,12 @@ def video_seconds(path: Path) -> float:
 
 
 def clip(video: Path, start: float, end: float, dest: Path) -> None:
-    subprocess.run(["ffmpeg", "-nostdin", "-y", "-ss", f"{max(0.0, start):.2f}",
-                    "-to", f"{end:.2f}", "-i", str(video), "-c", "copy", str(dest)],
-                   capture_output=True)
+    # re-encode, not -c copy: stream-copy snaps to keyframes and blanks short windows
+    start = max(0.0, start)
+    dur = max(0.5, end - start)
+    subprocess.run(["ffmpeg", "-nostdin", "-y", "-ss", f"{start:.2f}", "-i", str(video),
+                    "-t", f"{dur:.2f}", "-an", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-movflags", "+faststart", str(dest)], capture_output=True)
 
 
 def parse_log(path: Path) -> dict[str, dict]:
@@ -81,9 +91,47 @@ def parse_log(path: Path) -> dict[str, dict]:
     return tests
 
 
+def parse_commands(path: Path, day: str) -> list[tuple[float, str]]:
+    """Timestamp each command line so it buckets into a test window; continuation
+    lines fold into the prior entry. remoteTarget.log has only a time-of-day, so the
+    run's date pins it onto the same wall-clock as parse_log."""
+    entries: list[list] = []
+    for line in path.read_text(errors="replace").splitlines():
+        m = CMDLINE.match(line)
+        if m:
+            when = datetime.strptime("%s %s" % (day, m.group(1)), "%Y-%m-%d %H:%M:%S.%f").timestamp()
+            entries.append([when, line])
+        elif entries:
+            entries[-1][1] += "\n" + line
+    return [(w, t) for w, t in entries]
+
+
+def parse_serial(path: Path, day: str) -> list[tuple[float, str]]:
+    """Host-stamped console lines, pinned to the run's date so each buckets into a
+    test window."""
+    entries = []
+    for line in path.read_text(errors="replace").splitlines():
+        m = SERIALLINE.match(line)
+        if m:
+            when = datetime.strptime("%s %s" % (day, m.group(1)), "%Y-%m-%d %H:%M:%S.%f").timestamp()
+            entries.append((when, m.group(2)))
+    return entries
+
+
 def status_icon(status: str) -> str:
     return ('<svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width="2.4" '
             f'stroke-linecap="round" stroke-linejoin="round">{ICON.get(status, ICON["SKIPPED"])}</svg>')
+
+
+def _cap_console(console: str) -> str:
+    """Head+tail a long console block so a reboot/boot window does not swamp the page."""
+    lines = console.splitlines()
+    if len(lines) <= SERIAL_TEST_CAP:
+        return console
+    half = SERIAL_TEST_CAP // 2
+    return ("\n".join(lines[:half])
+            + "\n... (%d console lines omitted; full console in serial.log)\n" % (len(lines) - SERIAL_TEST_CAP)
+            + "\n".join(lines[-half:]))
 
 
 def section(title: str, summary: dict, body: list[str]) -> str:
@@ -92,10 +140,17 @@ def section(title: str, summary: dict, body: list[str]) -> str:
     path, _, leaf = title.rpartition(".")
     name = (f'<span class=path>{html.escape(path)}.</span>' if path else "") + \
            f'<span class=leaf>{html.escape(leaf)}</span>'
-    bootnote = ('<span class=cap>clip starts at power-on (boot)</span>'
-                if summary.get("boot") and summary.get("clip") else "")
-    video = (f'{bootnote}<video controls preload=none src="{summary["clip"]}"></video>'
+    video = (f'<video controls preload=none src="{summary["clip"]}"></video>'
              if summary.get("clip") else "")
+    cmds = SSH_NOISE.sub("$ ", summary.get("commands") or "")
+    clines = cmds.splitlines()
+    if len(clines) > CMD_TAIL:
+        cmds = "... (%d earlier command lines omitted)\n" % (len(clines) - CMD_TAIL) + "\n".join(clines[-CMD_TAIL:])
+    cmdblock = (f'<div class=log><span class=cap>commands</span><pre>{html.escape(cmds)}</pre></div>'
+                if cmds else "")
+    console = _cap_console(summary.get("console") or "")
+    consoleblock = (f'<div class=log><span class=cap>console (uart)</span><pre>{html.escape(console)}</pre></div>'
+                    if console else "")
     log = "\n".join(body).strip()
     cap = {"FAILED": "traceback", "ERROR": "traceback", "SKIPPED": "reason"}.get(status, "output")
     panel = (f'<div class=log><span class=cap>{cap}</span><pre>{html.escape(log)}</pre></div>'
@@ -106,7 +161,23 @@ def section(title: str, summary: dict, body: list[str]) -> str:
             f'<span class=dur>{summary["dur"]:.1f}s</span>'
             f'<svg class=chev viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2.2 '
             f'stroke-linecap=round stroke-linejoin=round><polyline points="9 6 15 12 9 18"/></svg>'
-            f'</summary><div class=panel>{video}{panel}</div></details>')
+            f'</summary><div class=panel>{video}{panel}{cmdblock}{consoleblock}</div></details>')
+
+
+def _logpre(body: str) -> str:
+    return f'<div class=log><pre>{html.escape(body)}</pre></div>'
+
+
+def _logfile(label: str, meta: str, panel: str) -> str:
+    return (f'<details class=logfile data-status="LOG" data-name="{html.escape(label)}"><summary>'
+            f'<span class=fileicon><svg viewBox="0 0 24 24" fill=none stroke=currentColor '
+            f'stroke-width=2 stroke-linecap=round stroke-linejoin=round>'
+            f'<path d="M7 4h7l3.5 3.5V20H7Z"/><polyline points="14 4 14 7.5 17.5 7.5"/></svg></span>'
+            f'<span class=name><span class=leaf>{html.escape(label)}</span></span>'
+            f'<span class=dur>{html.escape(meta)}</span>'
+            f'<svg class=chev viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2.2 '
+            f'stroke-linecap=round stroke-linejoin=round><polyline points="9 6 15 12 9 18"/></svg>'
+            f'</summary><div class=panel>{panel}</div></details>')
 
 
 def log_section(name: str, text: str) -> str:
@@ -116,15 +187,7 @@ def log_section(name: str, text: str) -> str:
     if len(lines) > LOG_TAIL:
         body = (f"... ({len(lines) - LOG_TAIL} earlier lines omitted; full {name} alongside this report)\n"
                 + "\n".join(lines[-LOG_TAIL:]))
-    return (f'<details class=logfile data-status="LOG" data-name="{html.escape(name)}"><summary>'
-            f'<span class=fileicon><svg viewBox="0 0 24 24" fill=none stroke=currentColor '
-            f'stroke-width=2 stroke-linecap=round stroke-linejoin=round>'
-            f'<path d="M7 4h7l3.5 3.5V20H7Z"/><polyline points="14 4 14 7.5 17.5 7.5"/></svg></span>'
-            f'<span class=name><span class=leaf>{html.escape(name)}</span></span>'
-            f'<span class=dur>{len(lines)} lines</span>'
-            f'<svg class=chev viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2.2 '
-            f'stroke-linecap=round stroke-linejoin=round><polyline points="9 6 15 12 9 18"/></svg>'
-            f'</summary><div class=panel><div class=log><pre>{html.escape(body)}</pre></div></div></details>')
+    return _logfile(name, f"{len(lines)} lines", _logpre(body))
 
 
 def capture_section(name: str, dur: float) -> str:
@@ -141,6 +204,14 @@ def capture_section(name: str, dur: float) -> str:
             f'</summary><div class=panel><video controls preload=none src="{name}"></video></div></details>')
 
 
+def boot_section(clip_src: str | None, console: str) -> str:
+    """The power-on boot as one collapsed row, kept out of the first test."""
+    vid = f'<video controls preload=none src="{clip_src}"></video>' if clip_src else ""
+    con = (f'<div class=log><span class=cap>console (uart)</span><pre>{html.escape(console)}</pre></div>'
+           if console else "")
+    return _logfile("boot / power-on", "power-on to first test", vid + con)
+
+
 def render(evidence: str | Path, title: str | None = None) -> Path:
     """Write index.html into the evidence directory and return its path."""
     ev = Path(evidence)
@@ -153,12 +224,25 @@ def render(evidence: str | Path, title: str | None = None) -> Path:
     video = ev / CAPTURE
     have_video = video.exists() and bool(logged)
     dur = video_seconds(video) if have_video else 0.0
-    anchor = max(t["end"] for t in logged.values()) - dur if have_video else 0.0
-    # the first test absorbs the boot: its clip opens at power-on, so boot is
-    # evidence on a real test rather than a separate step
-    first_tid = min(logged, key=lambda t: logged[t]["start"]) if have_video else None
+    cap_start = ev / CAPTURE_START
+    if have_video and cap_start.exists():
+        anchor = float(cap_start.read_text().strip())   # absolute: wall-clock of video t=0
+    elif have_video:
+        anchor = max(t["end"] for t in logged.values()) - dur  # legacy self-calibration
+    else:
+        anchor = 0.0
+    # the power-on boot gets its own row, not folded into the first test
+    first_tid = min(logged, key=lambda t: logged[t]["start"]) if logged else None
     if have_video:
         (ev / CLIPS).mkdir(exist_ok=True)
+
+    # bucket host-stamped command/console lines into each test window
+    day = (datetime.fromtimestamp(min(t["start"] for t in logged.values())).strftime("%Y-%m-%d")
+           if logged else "")
+    cmd_log = ev / COMMANDS
+    cmd_entries = parse_commands(cmd_log, day) if (cmd_log.exists() and day) else []
+    serial_log = ev / "serial.log"
+    serial_entries = parse_serial(serial_log, day) if (serial_log.exists() and day) else []
 
     counts, items = {}, []
     for tid, r in results.items():
@@ -174,11 +258,16 @@ def render(evidence: str | Path, title: str | None = None) -> Path:
         clip_src = None
         if have_video and tid in logged:
             clip_src = f"{CLIPS}/{tid.split('.')[0]}.{tid.split('.')[-1]}.mp4"
-            start = 0.0 if tid == first_tid else logged[tid]["start"] - anchor - BLEED
+            start = logged[tid]["start"] - anchor - BLEED
             clip(video, start, logged[tid]["end"] - anchor + BLEED, ev / clip_src)
+        w = logged.get(tid)
+        cmds = "\n".join(t for ts, t in cmd_entries if w and w["start"] <= ts <= w["end"]) if cmd_entries else ""
+        lo = w["start"] - BLEED if w else 0
+        console = "\n".join(t for ts, t in serial_entries
+                            if w and lo <= ts <= w["end"] + BLEED) if serial_entries else ""
         items.append((ORDER.get(status, 9), logged.get(tid, {}).get("start", 0),
                       section(tid, {"status": status, "dur": float(r.get("duration") or 0.0),
-                                    "clip": clip_src, "boot": tid == first_tid}, body)))
+                                    "clip": clip_src, "commands": cmds, "console": console}, body)))
 
     total = sum(counts.values())
     passed = counts.get("PASSED", 0)
@@ -195,8 +284,21 @@ def render(evidence: str | Path, title: str | None = None) -> Path:
         ev.name + "\n" + "  ".join(f"{v} {k}" for k, v in sorted(counts.items())) + "\n")
 
     files = capture_section(CAPTURE, dur) if have_video else ""
+    if first_tid:
+        first_start = logged[first_tid]["start"]
+        boot_clip = None
+        if have_video:
+            boot_clip = f"{CLIPS}/boot.mp4"
+            clip(video, 0.0, first_start - anchor + BLEED, ev / boot_clip)
+        boot_console = (_cap_console("\n".join(t for ts, t in serial_entries if ts < first_start))
+                        if serial_entries else "")
+        if boot_clip or boot_console:
+            files += boot_section(boot_clip, boot_console)
+    # commands fold into the per-test trail; serial too when host-stamped, else whole
+    embed = [n for n in (RUN_LOG, *COLLECTED_LOGS)
+             if n != COMMANDS and not (n == "serial.log" and serial_entries)]
     files += "".join(log_section(name, (ev / name).read_text(errors="replace"))
-                     for name in (RUN_LOG, *COLLECTED_LOGS)  # the full run log + every collected log
+                     for name in embed
                      if (ev / name).exists() and (ev / name).stat().st_size)
     if files:
         files = f'<section class=files><h2 class=group>files</h2>{files}</section>'
